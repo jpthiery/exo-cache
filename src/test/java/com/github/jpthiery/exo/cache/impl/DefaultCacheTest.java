@@ -19,15 +19,15 @@ import static org.assertj.core.api.Assertions.fail;
 
 class DefaultCacheTest implements Caches {
 
-    private Cache<String, Integer> cache;
-    private HashValueProvider valueProvider;
-
     @Test
     public void get_single_key() {
         //  given
 
         var key = "1234";
         var expectedValue = key.hashCode();
+
+        var valueProvider = new HashValueProvider();
+        var cache = getInstance(valueProvider);
 
         //  when
 
@@ -55,13 +55,10 @@ class DefaultCacheTest implements Caches {
         var key = "Matrix";
         var expectedValue = key.hashCode();
 
-        var task = new Callable<Integer>() {
-            @Override
-            public Integer call() throws Exception {
-                return cache.get(key);
-            }
-        };
-        executeInMultiThreadedContext(4_000_00, task, key, expectedValue);
+        var valueProvider = new HashValueProvider();
+        var cache = getInstance(valueProvider);
+
+        executeInMultiThreadedContext(4_000_00, cache, valueProvider, key, expectedValue);
     }
 
     //@Test
@@ -69,15 +66,12 @@ class DefaultCacheTest implements Caches {
         var key = "Matrix";
         var expectedValue = key.hashCode();
 
-        var task = new Callable<Integer>() {
-            @Override
-            public Integer call() throws Exception {
-                Thread.sleep(10000);
-                return cache.get(key);
-            }
-        };
+
+        var valueProvider = new LongHashValueProvider(10);
+        var cache = getInstance(valueProvider);
+
         var start = System.currentTimeMillis();
-        executeInMultiThreadedContext(4_000_00, task, key, expectedValue);
+        executeInMultiThreadedContext(4_000_00, cache, valueProvider, key, expectedValue);
         var end = System.currentTimeMillis();
         var durationInSeconde = TimeUnit.SECONDS.convert((end - start), TimeUnit.MILLISECONDS);
         assertThat(durationInSeconde)
@@ -85,10 +79,17 @@ class DefaultCacheTest implements Caches {
                 .isLessThan(15);
     }
 
-    public void executeInMultiThreadedContext(int nbTasks, Callable<Integer> task, String key, Integer expectedValue) {
+    public void executeInMultiThreadedContext(int nbTasks,Cache<String,Integer> cache,  HashValueProvider currentValueProvider, String key, Integer expectedValue) {
         //  given
         var executor = Executors.newFixedThreadPool(10);
 
+
+        var task = new Callable<Integer>() {
+            @Override
+            public Integer call() throws Exception {
+                return cache.get(key);
+            }
+        };
 
         var tasks = IntStream.range(0, nbTasks)
                 .boxed()
@@ -125,20 +126,14 @@ class DefaultCacheTest implements Caches {
                 .isEqualTo(nbTasks);
 
 
-        assertThat(valueProvider.getNbCall())
+        assertThat(currentValueProvider.getNbCall())
                 .as("ValueProvider had to provided a single value.")
                 .isEqualTo(1);
 
-        assertThat(valueProvider.getNbCallForKey(key))
+        assertThat(currentValueProvider.getNbCallForKey(key))
                 .as("ValueProvider had to provided a single value for key %s", key)
                 .isEqualTo(1);
 
-    }
-
-    @BeforeEach
-    public void setup() {
-        valueProvider = new HashValueProvider();
-        cache = getInstance(valueProvider);
     }
 
     private class HashValueProvider implements ValueProvider<String, Integer> {
@@ -167,6 +162,25 @@ class DefaultCacheTest implements Caches {
         public Integer getNbCallForKey(String key) {
             var res = nbValueProvideForGivenKey.get(key);
             return res == null ? 0 : res.get();
+        }
+    }
+
+    private class LongHashValueProvider extends HashValueProvider {
+
+        private final int waitingTimeInSeconds;
+
+        private LongHashValueProvider(int waitingTimeInSeconds) {
+            this.waitingTimeInSeconds = waitingTimeInSeconds;
+        }
+
+        @Override
+        public Integer provide(String key) {
+            try {
+                Thread.sleep(TimeUnit.SECONDS.toMillis(waitingTimeInSeconds));
+            } catch (InterruptedException e) {
+                fail(e.getMessage());
+            }
+            return super.provide(key);
         }
     }
 
